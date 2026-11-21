@@ -1,0 +1,6 @@
+flask
+requests
+yt-dlp
+gunicorn
+HdRezkaApi
+anicli-api
