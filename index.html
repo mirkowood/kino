@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Кино вдвоём</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;padding:env(safe-area-inset-top) 12px env(safe-area-inset-bottom);background:#111;color:#eee;font:16px -apple-system,system-ui,sans-serif}
+.box{max-width:720px;margin:0 auto;padding:12px 0}
+h1{font-size:22px;margin:8px 0 14px}
+button,input{font:inherit;border-radius:10px;border:0;padding:12px;margin:4px 0}
+button{background:#7c5cff;color:#fff;width:100%}
+button.g{background:#2a2a2a}
+input{background:#222;color:#fff;width:100%}
+video{width:100%;background:#000;border-radius:10px;max-height:60vh}
+#main{display:none}
+#st{font-size:14px;color:#aaa;margin:8px 0;min-height:20px}
+#code{font-size:28px;letter-spacing:4px;text-align:center;margin:8px 0}
+.row{display:flex;gap:8px}
+</style></head><body><div class="box">
+<h1>🍿 Кино вдвоём</h1>
+
+<div id="setup">
+  <button id="mk">Создать комнату</button>
+  <div id="code"></div>
+  <input id="jc" placeholder="Код комнаты от подруги" inputmode="numeric">
+  <button id="jn" class="g">Войти</button>
+</div>
+
+<div id="main">
+  <video id="v" controls playsinline></video>
+  <input id="u" placeholder="Ссылка на страницу с фильмом или на видео">
+  <div class="row"><input id="s" placeholder="Сезон" inputmode="numeric"><input id="e" placeholder="Серия" inputmode="numeric"></div>
+  <button id="lu">Загрузить по ссылке (у обоих)</button>
+  <button id="lf" class="g">Выбрать файл с телефона (оба один и тот же)</button>
+  <input id="f" type="file" accept="video/*" hidden>
+  <div class="row">
+    <button id="mu" class="g">🎤 Микро: вкл</button>
+    <button id="rs" class="g">🔄 Синхронизировать</button>
+  </div>
+</div>
+<div id="st"></div>
+<audio id="a" autoplay playsinline></audio>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+const $=i=>document.getElementById(i), v=$('v');
+let peer,conn,mic,lock=false,host=false;
+const log=t=>$('st').textContent=t;
+
+async function getMic(){
+  try{mic=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}})}
+  catch(e){mic=null;log('Микрофон не разрешён — будет без голоса (можно звонить в Дискорде)')}
+}
+function send(m){if(conn&&conn.open)conn.send(m)}
+function load(url){v.src=url;v.load();log('Видео загружено')}
+async function loadAny(u,s,e){
+  if(/\.(mp4|m3u8|webm|mov)(\?|$)/i.test(u)){load(u);return}
+  log('Достаю видео со страницы…');
+  try{
+    const r=await fetch('/resolve?url='+encodeURIComponent(u)+'&s='+(s||1)+'&e='+(e||1));const j=await r.json();
+    if(j.error){log('Не вышло: '+j.error);return}
+    load(j.mode==='proxy'?'/stream/'+j.id:j.direct);
+  }catch(e){log('Сервер не отвечает (нужен запуск на Render)')}
+}
+function apply(t,p){
+  lock=true;
+  if(Math.abs(v.currentTime-t)>0.6)v.currentTime=t;
+  if(p)v.play().catch(()=>log('Тапни по видео, чтобы запустить'));else v.pause();
+  setTimeout(()=>lock=false,500);
+}
+function state(){send({type:'s',t:v.currentTime,p:!v.paused})}
+function wire(c){
+  conn=c;
+  c.on('open',()=>{
+    $('setup').style.display='none';$('main').style.display='block';log('Подруга на связи ✅');
+    if(!host&&mic){const call=peer.call(c.peer,mic);call.on('stream',s=>{$('a').srcObject=s;$('a').play().catch(()=>{})})}
+  });
+  c.on('data',m=>{
+    if(m.type==='url')loadAny(m.url,m.s,m.e);
+    if(m.type==='s')apply(m.t,m.p);
+  });
+  c.on('close',()=>log('Связь потеряна. Обновите страницу'));
+}
+function start(isHost,code){
+  host=isHost;
+  peer=new Peer('kino-'+code);
+  peer.on('error',e=>{
+    if(e.type==='unavailable-id'&&isHost)mk();
+    else log('Ошибка: '+e.type)
+  });
+  peer.on('open',()=>{
+    if(isHost){$('code').textContent=code;log('Скажи этот код подруге и жди…')}
+    else{
+      const c=peer.connect('kino-'+code);wire(c)
+    }
+  });
+  if(isHost)peer.on('connection',wire);
+  peer.on('call',call=>{
+    call.answer(mic||undefined);
+    call.on('stream',s=>{$('a').srcObject=s;$('a').play().catch(()=>{})});
+  });
+}
+async function mk(){
+  await getMic();
+  start(true,String(Math.floor(1000+Math.random()*9000)));
+}
+$('mk').onclick=mk;
+$('jn').onclick=async()=>{
+  const c=$('jc').value.trim();if(!c)return;
+  await getMic();
+  // у гостя свой случайный id, подключаемся к хосту по коду
+  host=false;
+  peer=new Peer();
+  peer.on('error',e=>log('Ошибка: '+e.type));
+  peer.on('open',()=>{const cn=peer.connect('kino-'+c);wire(cn)});
+  peer.on('call',call=>{call.answer(mic||undefined);call.on('stream',s=>{$('a').srcObject=s;$('a').play().catch(()=>{})})});
+};
+$('lu').onclick=()=>{const u=$('u').value.trim();if(!u)return;const s=$('s').value,e=$('e').value;loadAny(u,s,e);send({type:'url',url:u,s,e})};
+$('lf').onclick=()=>$('f').click();
+$('f').onchange=e=>{const f=e.target.files[0];if(f){load(URL.createObjectURL(f));log('Файл: '+f.name+' — подруга должна выбрать такой же')}};
+$('mu').onclick=()=>{
+  if(!mic)return;const t=mic.getAudioTracks()[0];t.enabled=!t.enabled;
+  $('mu').textContent=t.enabled?'🎤 Микро: вкл':'🔇 Микро: выкл';
+};
+$('rs').onclick=state;
+['play','pause','seeked'].forEach(ev=>v.addEventListener(ev,()=>{if(!lock)state()}));
+</script></body></html>
